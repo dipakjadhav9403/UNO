@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="hi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Uno Room</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1c1a;--card:#fff;--mut:#777;--line:#ddd}
+@media (prefers-color-scheme:dark){:root{--bg:#17171a;--fg:#f0efe9;--card:#26262b;--mut:#9a9a9a;--line:#3a3a40}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;padding:16px;max-width:520px;margin:auto}
+h1{font-size:28px;margin:8px 0 16px}
+input,button{font:inherit;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);width:100%;margin-bottom:10px}
+button{cursor:pointer;font-weight:600}button.p{background:#e53935;color:#fff;border:0}
+button:disabled{opacity:.4}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+.code{font-size:40px;letter-spacing:8px;font-weight:800;text-align:center}
+.mut{color:var(--mut);font-size:14px}
+.hand{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.c{width:52px;height:78px;border-radius:8px;color:#fff;font-weight:800;font-size:20px;display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 1px 4px #0006;cursor:pointer;user-select:none}
+.c.big{width:72px;height:108px;font-size:28px;cursor:default}
+.c.no{opacity:.4}.c.Y{color:#222}
+.R{background:#e53935}.G{background:#43a047}.B{background:#1e88e5}.Y{background:#fdd835}.W{background:#222}
+.row{display:flex;gap:12px;align-items:center;justify-content:center;margin:10px 0}
+.opp{display:inline-block;padding:6px 10px;border-radius:20px;border:1px solid var(--line);margin:3px;font-size:14px}
+.opp.t{background:#e53935;color:#fff;border-color:#e53935}.opp.f{opacity:.6}
+.pick{display:flex;gap:8px;justify-content:center}.pick .c{width:56px;height:56px}
+a.lv{color:var(--mut);font-size:13px;display:block;text-align:center;margin-top:16px}
+</style></head><body>
+<h1>🃏 Uno Room</h1>
+<div id="app" class="mut">Loading…</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+// ====== STEP 1: Firebase config yahan paste karo ======
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyASZG76Jvdp89EkGrHFHL9bvREZH9wdkQc",
+  authDomain: "dipak-uno.firebaseapp.com",
+  databaseURL: "https://dipak-uno-default-rtdb.firebaseio.com",
+  projectId: "dipak-uno",
+  storageBucket: "dipak-uno.firebasestorage.app",
+  messagingSenderId: "188608211707",
+  appId: "1:188608211707:web:6123883b2f89e0f99dde5e",
+  measurementId: "G-SRPRDCK99J"
+};
+// ======================================================
+
+const MAX=8;
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+const ls={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
+let db,myId=ls.get('unoid'),code=null,room=null,players=[],st=null,err='',name=ls.get('unoname')||'',pending=null,ref=null;
+if(!myId){myId=Math.random().toString(36).slice(2,10);ls.set('unoid',myId)}
+const SYM={S:'⊘',R:'⇄',D:'+2',W:'W',W4:'+4'};
+const lab=c=>SYM[c.slice(1)]||c.slice(1);
+const cc=c=>c[0];
+
+async function init(){
+  if(FIREBASE_CONFIG.apiKey.includes('PASTE')){$('app').innerHTML='<div class="box">Pehle file ke upar <b>FIREBASE_CONFIG</b> me apna Firebase config paste karo.</div>';return}
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);db=firebase.database();
+    const saved=ls.get('unocode');
+    if(saved){const s=await db.ref('rooms/'+saved).once('value'),r=s.val();
+      if(r&&r.players&&r.players[myId]){name=r.players[myId].name;return attach(saved)}
+      ls.del('unocode')}
+    home();
+  }catch(e){$('app').textContent='Error: '+(e.message||e)}
+}
+function home(){
+  $('app').innerHTML=`<div class="box"><input id="nm" placeholder="Apna naam" maxlength="14" value="${esc(name)}">
+  <button class="p" id="cr">Room Create Karo</button>
+  <div class="mut" style="text-align:center;margin:6px 0">ya dost ka code daalo</div>
+  <input id="cd" placeholder="ROOM CODE" maxlength="4" style="text-transform:uppercase;text-align:center">
+  <button id="jn">Join Karo</button><div style="color:#e53935">${esc(err)}</div></div>`;
+  const getName=()=>{name=$('nm').value.trim();if(!name){err='Pehle naam likho';home();return null}ls.set('unoname',name);return name};
+  $('cr').onclick=async()=>{if(!getName())return;
+    const c=Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('');
+    try{await db.ref('rooms/'+c).set({host:myId,phase:'lobby',s:''});await join(c)}catch(e){err=e.message;home()}};
+  $('jn').onclick=async()=>{if(!getName())return;const c=$('cd').value.trim().toUpperCase();
+    try{const r=(await db.ref('rooms/'+c).once('value')).val();
+      if(!r){err='Room nahi mila';return home()}
+      const inRoom=r.players&&r.players[myId],n=Object.keys(r.players||{}).length;
+      if(!inRoom&&r.phase!=='lobby'){err='Game shuru ho chuka hai';return home()}
+      if(!inRoom&&n>=MAX){err='Room full hai (max 8)';return home()}
+      await join(c)}catch(e){err=e.message;home()}};
+}
+async function join(c){
+  await db.ref(`rooms/${c}/players/${myId}`).update({name,t:firebase.database.ServerValue.TIMESTAMP});
+  attach(c);
+}
+function attach(c){
+  code=c;err='';ls.set('unocode',c);
+  ref=db.ref('rooms/'+c);ref.on('value',s=>{room=s.val();render()});
+}
+function leave(){if(ref)ref.off();ls.del('unocode');code=null;room=null;home()}
+function render(){
+  if(!code)return;
+  if(!room){leave();return}
+  players=Object.entries(room.players||{}).map(([id,p])=>({id,...p})).sort((a,b)=>(a.t||0)-(b.t||0));
+  st=room.s?JSON.parse(room.s):null;
+  if(room.phase==='lobby'||!st)lobby();else game();
+}
+function lobby(){
+  const host=room.host===myId;
+  $('app').innerHTML=`<div class="box"><div class="mut" style="text-align:center">Dosto ko ye code bhejo</div><div class="code">${esc(code)}</div></div>
+  <div class="box"><b>Players (${players.length}/${MAX})</b><br>${players.map(p=>`<span class="opp ${p.id===myId?'t':''}">${esc(p.name)}</span>`).join('')}</div>
+  ${host?`<button class="p" id="st" ${players.length<2?'disabled':''}>Game Shuru Karo</button><div class="mut">Kam se kam 2 players chahiye</div>`:'<div class="mut" style="text-align:center">Host ke start karne ka wait...</div>'}
+  <a class="lv" href="#" id="lv">Room se bahar niklo</a>`;
+  if(host&&players.length>=2)$('st').onclick=start;
+  $('lv').onclick=e=>{e.preventDefault();leave()};
+}
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+async function start(){
+  const d=[];for(const c of 'RGBY'){d.push(c+'0');for(const v of ['1','2','3','4','5','6','7','8','9','S','R','D'])d.push(c+v,c+v)}
+  for(let i=0;i<4;i++)d.push('W','W4');
+  shuffle(d);const ps=players.slice(0,MAX),order=ps.map(p=>p.id),names={},hands={};
+  ps.forEach(p=>{names[p.id]=p.name;hands[p.id]=d.splice(0,7)});
+  const k=d.findIndex(c=>/^[RGBY]\d$/.test(c)),top=d.splice(k,1)[0];
+  st={order,names,hands,deck:d,disc:[top],turn:0,dir:1,color:cc(top),fin:[],over:false,log:'Game shuru!'};
+  await save('play');
+}
+const save=phase=>ref.update({phase:phase||room.phase,s:JSON.stringify(st)});
+function drawN(pid,n){
+  for(let i=0;i<n;i++){
+    if(!st.deck.length){const top=st.disc.pop();st.deck=shuffle(st.disc);st.disc=[top];if(!st.deck.length)return}
+    st.hands[pid].push(st.deck.pop());
+  }
+}
+const nxt=(i,s=1)=>((i+st.dir*s)%st.order.length+st.order.length)%st.order.length;
+const ok=c=>{const t=st.disc[st.disc.length-1];return cc(c)==='W'||cc(c)===st.color||c.slice(1)===t.slice(1)};
+async function play(i,col){
+  const me=st.order[st.turn];if(me!==myId||st.over)return;
+  const c=st.hands[me][i];if(!ok(c))return;
+  if(cc(c)==='W'&&!col){pending=i;return game()}
+  pending=null;st.hands[me].splice(i,1);st.disc.push(c);st.color=cc(c)==='W'?col:cc(c);
+  const v=c.slice(1);let steps=1,msg=`${st.names[me]} ne ${lab(c)} khela`;
+  if(v==='R'){st.dir*=-1;if(st.order.length===2)steps=2}
+  if(v==='S')steps=2;
+  if(v==='D'||v==='W4'){const t=st.order[nxt(st.turn)],n=v==='D'?2:4;drawN(t,n);steps=2;msg+=` (${st.names[t]} +${n})`}
+  const target=st.order[nxt(st.turn,steps)];
+  if(!st.hands[me].length){
+    st.fin.push(me);st.order=st.order.filter(x=>x!==me);msg+=` — nikal gaya! #${st.fin.length} 🏆`;
+    if(st.order.length===1){st.fin.push(st.order[0]);st.over=true;st.log=msg+` | ${st.names[st.order[0]]} haar gaya 😅`;return save('done')}
+    st.turn=st.order.indexOf(target);
+  }else{
+    if(st.hands[me].length===1)msg+=' — UNO! 🔔';
+    st.turn=nxt(st.turn,steps);
+  }
+  st.log=msg;await save();
+}
+async function draw(){
+  if(st.order[st.turn]!==myId||st.over)return;
+  drawN(myId,1);st.log=`${st.names[myId]} ne card uthaya`;st.turn=nxt(st.turn);await save();
+}
+async function again(){st=null;await ref.update({phase:'lobby',s:''})}
+function game(){
+  const top=st.disc[st.disc.length-1],turnId=st.order[st.turn],mine=turnId===myId&&!st.over,hand=st.hands[myId]||[];
+  const rank=st.fin.indexOf(myId);
+  const opps=st.order.filter(id=>id!==myId).map(id=>`<span class="opp ${turnId===id?'t':''}">${esc(st.names[id])}: ${st.hands[id].length}🃏</span>`).join('')
+    +st.fin.map((id,i)=>id===myId?'':`<span class="opp f">#${i+1} ${esc(st.names[id])} ✅</span>`).join('');
+  let status;
+  if(st.over)status='Game khatam!';
+  else if(rank>=0)status=`Tum #${rank+1} par nikal gaye 🎉 — baaki game dekhte raho`;
+  else status=mine?'👉 Tumhari baari!':esc(st.names[turnId])+' ki baari';
+  const result=st.over?`<div class="box"><b>Result</b><br>${st.fin.map((id,i)=>`${i+1}. ${esc(st.names[id])}${i===st.fin.length-1?' 😅 (haara)':''}`).join('<br>')}</div>
+    ${room.host===myId?'<button class="p" id="ag">Dobara Khelo</button>':'<div class="mut" style="text-align:center">Host dobara shuru karega</div>'}`:'';
+  $('app').innerHTML=`<div>${opps}</div>
+  <div class="row"><div class="c big ${cc(top)}">${lab(top)}</div><div><div class="mut">Current color</div><div class="c ${st.color}" style="width:40px;height:40px;cursor:default"></div></div>
+  <button id="dr" style="width:80px" ${mine?'':'disabled'}>Draw</button></div>
+  <div class="box" style="text-align:center">${esc(st.log)}<br><b>${status}</b></div>
+  ${result}
+  ${pending!==null?`<div class="box"><div style="text-align:center;margin-bottom:8px">Color chuno</div><div class="pick">${[...'RGBY'].map(c=>`<div class="c ${c}" data-col="${c}"></div>`).join('')}</div></div>`:''}
+  <div class="hand">${hand.map((c,i)=>`<div class="c ${cc(c)} ${mine&&ok(c)?'':'no'}" data-i="${i}">${lab(c)}</div>`).join('')}</div>
+  <a class="lv" href="#" id="lv">Room se bahar niklo</a>`;
+  $('dr').onclick=draw;
+  if($('ag'))$('ag').onclick=again;
+  $('lv').onclick=e=>{e.preventDefault();leave()};
+  document.querySelectorAll('[data-i]').forEach(e=>e.onclick=()=>play(+e.dataset.i));
+  document.querySelectorAll('[data-col]').forEach(e=>e.onclick=()=>play(pending,e.dataset.col));
+}
+init();
+</script></body></html>
